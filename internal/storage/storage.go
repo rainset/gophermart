@@ -61,13 +61,12 @@ func New(dataSourceName string) *Database {
 		panic(err)
 	}
 
-	if err == nil {
-		log.Print("DB: connection initialized...")
-		err = CreateTables(ctx, db)
-		if err != nil {
-			log.Println(err)
-		}
+	log.Print("DB: connection initialized...")
+	err = CreateTables(ctx, db)
+	if err != nil {
+		log.Println(err)
 	}
+
 	return &Database{
 		pgx: db,
 		ctx: ctx,

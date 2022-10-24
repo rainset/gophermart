@@ -10,12 +10,10 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"sync"
 	"time"
 )
 
 type App struct {
-	mu     sync.Mutex
 	Config Config
 	Router *gin.Engine
 	s      storage.Interface
@@ -36,12 +34,8 @@ func (a *App) GetOrderStatusRequest(orderNumber string) (err error) {
 		time.Sleep(10 * time.Second)
 		return err
 	}
-	defer func(Body io.ReadCloser) {
-		err := Body.Close()
-		if err != nil {
-			log.Println(err)
-		}
-	}(resp.Body)
+	defer resp.Body.Close()
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Println(err)
@@ -63,9 +57,9 @@ func (a *App) GetOrderStatusRequest(orderNumber string) (err error) {
 			Accrual: responseBody.Accrual,
 		}
 
-		errDb := a.s.UpdateOrderByNumber(orderNumber, order)
-		if errDb != nil {
-			return errDb
+		errDB := a.s.UpdateOrderByNumber(orderNumber, order)
+		if errDB != nil {
+			return errDB
 		}
 
 	case http.StatusNoContent:
@@ -95,9 +89,12 @@ func (a *App) UpdateOrderStatusServer() {
 
 	for _, v := range orders {
 		err = a.GetOrderStatusRequest(v.Number)
+		if err != nil {
+			log.Println(err)
+		}
 	}
 
 	time.Sleep(10 * time.Second)
 	a.UpdateOrderStatusServer()
-
+	return
 }

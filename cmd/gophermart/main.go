@@ -31,8 +31,7 @@ func main() {
 		SessionName:          "userID",
 	}
 
-	var s storage.Interface
-	s = storage.New(*databaseDsn)
+	var s storage.Interface = storage.New(*databaseDsn)
 
 	a := app.New(s, conf)
 
