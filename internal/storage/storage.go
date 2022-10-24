@@ -33,8 +33,8 @@ type UserBalance struct {
 
 const (
 	OrderStatusNew       string = "NEW"       // — заказ загружен в систему, но не попал в обработку;
-	OrderStatusInvalid          = "INVALID"   //INVALID — система расчёта вознаграждений отказала в расчёте;
-	OrderStatusProcessed        = "PROCESSED" //PROCESSED — данные по заказу проверены и информация о расчёте успешно получена.
+	OrderStatusInvalid   string = "INVALID"   //INVALID — система расчёта вознаграждений отказала в расчёте;
+	OrderStatusProcessed string = "PROCESSED" //PROCESSED — данные по заказу проверены и информация о расчёте успешно получена.
 )
 
 type OrderTable struct {

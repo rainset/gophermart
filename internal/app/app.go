@@ -96,5 +96,4 @@ func (a *App) UpdateOrderStatusServer() {
 
 	time.Sleep(10 * time.Second)
 	a.UpdateOrderStatusServer()
-	return
 }
