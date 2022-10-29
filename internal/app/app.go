@@ -5,50 +5,49 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/go-resty/resty/v2"
+	"github.com/rainset/gophermart/internal/config"
 	"github.com/rainset/gophermart/internal/storage"
-	"io"
 	"log"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 )
 
+type Session struct {
+	UserID int
+}
+
 type App struct {
-	Config Config
+	Config *config.Config
 	Router *gin.Engine
 	s      storage.Interface
 }
 
-func New(storage storage.Interface, c Config) *App {
+func New(storage storage.Interface, c *config.Config) *App {
 	return &App{
 		s:      storage,
 		Config: c,
 	}
 }
 
-func (a *App) GetOrderStatusRequest(orderNumber string) (err error) {
+func (a *App) UpdateOrderFromAccrualSystem(orderNumber string) (err error) {
 	requestURL := fmt.Sprintf("%s/api/orders/%s", a.Config.AccrualSystemAddress, orderNumber)
 
-	resp, err := http.Get(requestURL)
-	if err != nil {
-		time.Sleep(10 * time.Second)
-		return err
-	}
-	defer resp.Body.Close()
+	responseBody := struct {
+		Order   string  `json:"order"`
+		Status  string  `json:"status"`
+		Accrual float64 `json:"accrual"`
+	}{}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Println(err)
-	}
-	switch resp.StatusCode {
+	client := resty.New()
+	resp, err := client.R().SetResult(&responseBody).Get(requestURL)
+
+	switch resp.StatusCode() {
 	case http.StatusOK:
-		responseBody := struct {
-			Order   string  `json:"order"`
-			Status  string  `json:"status"`
-			Accrual float64 `json:"accrual"`
-		}{}
 
-		err = json.Unmarshal(body, &responseBody)
+		err = json.Unmarshal(resp.Body(), &responseBody)
 		if err != nil {
 			return err
 		}
@@ -65,7 +64,7 @@ func (a *App) GetOrderStatusRequest(orderNumber string) (err error) {
 	case http.StatusNoContent:
 		return errors.New("StatusNoContent")
 	case http.StatusTooManyRequests:
-		sleepSeconds, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
+		sleepSeconds, _ := strconv.Atoi(resp.Header().Get("Retry-After"))
 		if sleepSeconds > 0 {
 			time.Sleep(time.Duration(sleepSeconds) * time.Second)
 		} else {
@@ -73,27 +72,38 @@ func (a *App) GetOrderStatusRequest(orderNumber string) (err error) {
 		}
 		return errors.New("TooManyRequests")
 	default:
-		time.Sleep(5 * time.Second)
 		return errors.New("StatusCodeNotFound")
 	}
 
 	return nil
 }
 
-func (a *App) UpdateOrderStatusServer() {
+func (a *App) UpdateOrderStatusServer() (err error) {
+
+	log.Println("UpdateOrderStatusServer...")
 	orders, err := a.s.GetProcessingOrderList()
 	if err != nil {
-		a.UpdateOrderStatusServer()
-		return
+		log.Println("GetProcessingOrderList:", err)
+		return err
 	}
 
+	var wg sync.WaitGroup
 	for _, v := range orders {
-		err = a.GetOrderStatusRequest(v.Number)
-		if err != nil {
-			log.Println(err)
-		}
+		wg.Add(1)
+		go func(v storage.OrderTable) {
+			defer wg.Done()
+			err = a.UpdateOrderFromAccrualSystem(v.Number)
+			if err != nil {
+				log.Println(err)
+			}
+		}(v)
 	}
-
-	time.Sleep(10 * time.Second)
-	a.UpdateOrderStatusServer()
+	wg.Wait()
+	time.Sleep(2 * time.Second)
+	err = a.UpdateOrderStatusServer()
+	if err != nil {
+		log.Println("UpdateOrderStatusServer:", err)
+		return err
+	}
+	return err
 }

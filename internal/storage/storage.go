@@ -111,11 +111,16 @@ func (d *Database) CreateUser(user UserTable) (userID int, err error) {
 
 func (d *Database) GetUserIDByCredentials(login, password string) (userID int, err error) {
 	var hash = GetMD5Hash(password)
-	sql := "SELECT id FROM users WHERE login = $1 AND password = $2"
-	err = d.pgx.QueryRow(d.ctx, sql, login, hash).Scan(&userID)
+	var qPass string
+	sql := "SELECT id,password FROM users WHERE login = $1"
+	err = d.pgx.QueryRow(d.ctx, sql, login).Scan(&userID, &qPass)
 	if err != nil {
+		return userID, err
+	}
+	if hash != qPass {
 		return userID, ErrorUserCredentials
 	}
+
 	return userID, err
 }
 
@@ -148,31 +153,24 @@ func (d *Database) UpdateOrderByNumber(number string, order OrderTable) (err err
 
 	if order.Accrual > 0 {
 
-		sql := "SELECT u.id, u.balance, o.id FROM users u JOIN orders o ON u.id = o.user_id WHERE o.number = $1 LIMIT 1"
-		err = tx.QueryRow(d.ctx, sql, number).Scan(&userID, &balance, &orderID)
+		s1 := "SELECT u.id, u.balance, o.id FROM users u JOIN orders o ON u.id = o.user_id WHERE o.number = $1 LIMIT 1"
+		err = tx.QueryRow(d.ctx, s1, number).Scan(&userID, &balance, &orderID)
 		if err != nil {
 			return err
 		}
 
 		resultBalance := balance + order.Accrual
-		sql = "UPDATE users SET balance=$1 WHERE id=$2"
-		_, err = tx.Exec(d.ctx, sql, resultBalance, userID)
+		s2 := "UPDATE users SET balance=$1 WHERE id=$2"
+		_, err = tx.Exec(d.ctx, s2, resultBalance, userID)
 		if err != nil {
 			return err
 		}
+	}
 
-		sql = "UPDATE orders SET status=$1,accrual=$2,uploaded_at=$3 WHERE number=$4"
-		_, err = tx.Exec(d.ctx, sql, order.Status, order.Accrual, time.Now().UTC(), number)
-		if err != nil {
-			return err
-		}
-
-	} else {
-		sql := "UPDATE orders SET status=$1,uploaded_at=$3 WHERE number=$4"
-		_, err = tx.Exec(d.ctx, sql, order.Status, time.Now().UTC(), number)
-		if err != nil {
-			return err
-		}
+	s3 := "UPDATE orders SET status=$1,accrual=$2,uploaded_at=$3 WHERE number=$4"
+	_, err = tx.Exec(d.ctx, s3, order.Status, order.Accrual, time.Now().UTC(), number)
+	if err != nil {
+		return err
 	}
 
 	return err
