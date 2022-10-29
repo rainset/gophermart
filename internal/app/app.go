@@ -43,6 +43,10 @@ func (a *App) UpdateOrderFromAccrualSystem(orderNumber string) (err error) {
 
 	client := resty.New()
 	resp, err := client.R().SetResult(&responseBody).Get(requestURL)
+	if err != nil {
+		log.Println("UpdateOrderFromAccrualSystem:", err)
+		return err
+	}
 
 	switch resp.StatusCode() {
 	case http.StatusOK:
