@@ -7,7 +7,6 @@ import (
 	"github.com/gin-gonic/contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"github.com/rainset/gophermart/internal/storage"
-	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -37,15 +36,15 @@ func (a *App) NewRouter() *gin.Engine {
 	r.GET("/api/user/withdrawals", a.AuthMiddleware, a.GetUserWithdrawalsHandler)
 
 	r.NoRoute(func(c *gin.Context) {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": http.StatusInternalServerError})
+		c.JSON(http.StatusNotFound, gin.H{"code": http.StatusNotFound})
 	})
 	return r
 }
 
 func (a *App) AuthMiddleware(c *gin.Context) {
-	session := sessions.Default(c)
-	sessionHash := session.Get(a.Config.SessionName)
-	if sessionHash == nil {
+	ss := sessions.Default(c)
+	_, ok := ss.Get(a.Config.SessionName).(Session)
+	if !ok {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized})
 	}
 	c.Next()
@@ -60,7 +59,6 @@ func (a *App) UserRegisterHandler(c *gin.Context) {
 
 	err := c.BindJSON(&clientData)
 	if err != nil {
-		log.Println(err)
 		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "err": err})
 		return
 	}
@@ -80,9 +78,9 @@ func (a *App) UserRegisterHandler(c *gin.Context) {
 	}
 
 	if userID > 0 {
-		session := sessions.Default(c)
-		session.Set(a.Config.SessionName, userID)
-		_ = session.Save()
+		ss := sessions.Default(c)
+		ss.Set(a.Config.SessionName, Session{UserID: userID})
+		_ = ss.Save()
 	}
 
 	c.JSON(http.StatusOK, gin.H{"code": http.StatusOK})
@@ -108,14 +106,14 @@ func (a *App) UserLoginHandler(c *gin.Context) {
 			c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized})
 			return
 		}
-		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest})
+		c.JSON(http.StatusInternalServerError, gin.H{"code": http.StatusInternalServerError})
 		return
 	}
 
 	if userID > 0 {
-		session := sessions.Default(c)
-		session.Set(a.Config.SessionName, userID)
-		_ = session.Save()
+		ss := sessions.Default(c)
+		ss.Set(a.Config.SessionName, Session{UserID: userID})
+		_ = ss.Save()
 	}
 
 	c.JSON(http.StatusOK, gin.H{"code": http.StatusOK})
@@ -123,8 +121,8 @@ func (a *App) UserLoginHandler(c *gin.Context) {
 
 func (a *App) CreateUserOrderHandler(c *gin.Context) {
 
-	session := sessions.Default(c)
-	sessionUserID := session.Get(a.Config.SessionName).(int)
+	ss := sessions.Default(c)
+	session := ss.Get(a.Config.SessionName).(Session)
 
 	var requestOrderNumber int
 	err := c.BindJSON(&requestOrderNumber)
@@ -141,7 +139,7 @@ func (a *App) CreateUserOrderHandler(c *gin.Context) {
 	}
 
 	orderData := storage.OrderTable{
-		UserID: sessionUserID,
+		UserID: session.UserID,
 		Number: requestOrderNumberStr,
 		Status: storage.OrderStatusNew,
 	}
@@ -151,7 +149,7 @@ func (a *App) CreateUserOrderHandler(c *gin.Context) {
 	if err != nil {
 		if errors.Is(err, storage.ErrorOrderAlreadyExists) {
 			order, _ := a.s.GetOrderByNumber(requestOrderNumberStr)
-			if sessionUserID == order.UserID { // заказ есть у текущего пользователя
+			if session.UserID == order.UserID { // заказ есть у текущего пользователя
 				c.JSON(http.StatusOK, gin.H{"code": http.StatusOK})
 				c.Abort()
 				return
@@ -167,8 +165,9 @@ func (a *App) CreateUserOrderHandler(c *gin.Context) {
 }
 
 func (a *App) GetUserOrdersHandler(c *gin.Context) {
-	session := sessions.Default(c)
-	sessionUserID := session.Get(a.Config.SessionName).(int)
+
+	ss := sessions.Default(c)
+	session := ss.Get(a.Config.SessionName).(Session)
 
 	type ResponseOrderData struct {
 		Number     string  `json:"number"`
@@ -177,7 +176,7 @@ func (a *App) GetUserOrdersHandler(c *gin.Context) {
 		UploadedAt string  `json:"uploaded_at"`
 	}
 
-	orders, err := a.s.GetOrdersByUserID(sessionUserID)
+	orders, err := a.s.GetOrdersByUserID(session.UserID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": http.StatusInternalServerError})
 		return
@@ -202,9 +201,9 @@ func (a *App) GetUserOrdersHandler(c *gin.Context) {
 }
 
 func (a *App) GetUserBalanceHandler(c *gin.Context) {
-	session := sessions.Default(c)
-	sessionUserID := session.Get(a.Config.SessionName).(int)
-	userBalance, err := a.s.GetUserBalance(sessionUserID)
+	ss := sessions.Default(c)
+	session := ss.Get(a.Config.SessionName).(Session)
+	userBalance, err := a.s.GetUserBalance(session.UserID)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": http.StatusInternalServerError})
@@ -217,8 +216,8 @@ func (a *App) GetUserBalanceHandler(c *gin.Context) {
 
 func (a *App) CreateUserWithdrawHandler(c *gin.Context) {
 
-	session := sessions.Default(c)
-	sessionUserID := session.Get(a.Config.SessionName).(int)
+	ss := sessions.Default(c)
+	session := ss.Get(a.Config.SessionName).(Session)
 
 	clientData := struct {
 		OrderNumber string  `json:"order"`
@@ -239,7 +238,7 @@ func (a *App) CreateUserWithdrawHandler(c *gin.Context) {
 		return
 	}
 
-	err = a.s.CreateUserWithdraw(sessionUserID, clientData.OrderNumber, clientData.Sum)
+	err = a.s.CreateUserWithdraw(session.UserID, clientData.OrderNumber, clientData.Sum)
 
 	if err != nil {
 		if errors.Is(err, storage.ErrorOrderNotFound) {
@@ -260,8 +259,8 @@ func (a *App) CreateUserWithdrawHandler(c *gin.Context) {
 
 func (a *App) GetUserWithdrawalsHandler(c *gin.Context) {
 
-	session := sessions.Default(c)
-	sessionUserID := session.Get(a.Config.SessionName).(int)
+	ss := sessions.Default(c)
+	session := ss.Get(a.Config.SessionName).(Session)
 
 	type ResponseWithrawn struct {
 		OrderNumber string  `json:"order"`
@@ -269,7 +268,7 @@ func (a *App) GetUserWithdrawalsHandler(c *gin.Context) {
 		ProcessedAt string  `json:"processed_at"`
 	}
 
-	withdrawals, _ := a.s.GetWithdrawListByUserID(sessionUserID)
+	withdrawals, _ := a.s.GetWithdrawListByUserID(session.UserID)
 
 	var result []ResponseWithrawn
 	for _, v := range withdrawals {
