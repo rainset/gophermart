@@ -103,6 +103,4 @@ func (a *App) UpdateOrderStatusServer() (err error) {
 		wg.Wait()
 		time.Sleep(10 * time.Second)
 	}
-
-	return err
 }
