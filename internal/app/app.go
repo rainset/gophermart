@@ -1,7 +1,6 @@
 package app
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
@@ -33,6 +32,7 @@ func New(storage storage.Interface, c *config.Config) *App {
 }
 
 func (a *App) UpdateOrderFromAccrualSystem(orderNumber string) (err error) {
+
 	requestURL := fmt.Sprintf("%s/api/orders/%s", a.Config.AccrualSystemAddress, orderNumber)
 
 	responseBody := struct {
@@ -44,26 +44,21 @@ func (a *App) UpdateOrderFromAccrualSystem(orderNumber string) (err error) {
 	client := resty.New()
 	resp, err := client.R().SetResult(&responseBody).Get(requestURL)
 	if err != nil {
-		log.Println("UpdateOrderFromAccrualSystem:", err)
 		return err
 	}
 
 	switch resp.StatusCode() {
 	case http.StatusOK:
-
-		err = json.Unmarshal(resp.Body(), &responseBody)
-		if err != nil {
-			return err
-		}
 		order := storage.OrderTable{
 			Status:  responseBody.Status,
 			Accrual: responseBody.Accrual,
 		}
-
 		errDB := a.s.UpdateOrderByNumber(orderNumber, order)
 		if errDB != nil {
 			return errDB
 		}
+
+		log.Println("order updated:", responseBody)
 
 	case http.StatusNoContent:
 		return errors.New("StatusNoContent")
@@ -85,29 +80,29 @@ func (a *App) UpdateOrderFromAccrualSystem(orderNumber string) (err error) {
 func (a *App) UpdateOrderStatusServer() (err error) {
 
 	log.Println("UpdateOrderStatusServer...")
-	orders, err := a.s.GetProcessingOrderList()
-	if err != nil {
-		log.Println("GetProcessingOrderList:", err)
-		return err
+
+	for {
+		orders, err := a.s.GetProcessingOrderList()
+		if err != nil {
+			log.Println("GetProcessingOrderList:", err)
+			return err
+		}
+
+		var wg sync.WaitGroup
+
+		for _, v := range orders {
+			wg.Add(1)
+			go func(v storage.OrderTable) {
+				defer wg.Done()
+				errUpdate := a.UpdateOrderFromAccrualSystem(v.Number)
+				if errUpdate != nil {
+					log.Println(errUpdate)
+				}
+			}(v)
+		}
+		wg.Wait()
+		time.Sleep(10 * time.Second)
 	}
 
-	var wg sync.WaitGroup
-	for _, v := range orders {
-		wg.Add(1)
-		go func(v storage.OrderTable) {
-			defer wg.Done()
-			err = a.UpdateOrderFromAccrualSystem(v.Number)
-			if err != nil {
-				log.Println(err)
-			}
-		}(v)
-	}
-	wg.Wait()
-	time.Sleep(2 * time.Second)
-	err = a.UpdateOrderStatusServer()
-	if err != nil {
-		log.Println("UpdateOrderStatusServer:", err)
-		return err
-	}
 	return err
 }
